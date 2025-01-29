@@ -4,7 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"woody_ear/pkg/vosk-api"
+
+	vosk "github.com/alphacep/vosk-api/go"
 )
 
 type VoskService struct {
@@ -27,17 +28,17 @@ func (vs *VoskService) RecognizeAudio(filePath string) (string, error) {
 		return "", fmt.Errorf("can't read file: %w", err)
 	}
 
-	recognizer, err := vosk.NewRecognizer(vs.model, 16000)
-	if recognizer != nil {
+	recognizer, err := vosk.NewRecognizer(vs.model, 64000)
+	if recognizer == nil {
 		return "", fmt.Errorf("can't create recognizer: %w", err)
 	}
 	defer recognizer.Free()
 
 	recognizer.AcceptWaveform(data)
 	result := recognizer.FinalResult()
-	if result == "" {
+	if len(result) == 0 {
 		return "", errors.New("result is empty")
 	}
 
-	return result, nil
+	return string(result), nil
 }
