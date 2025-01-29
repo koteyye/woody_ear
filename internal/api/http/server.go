@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	readHeaderTimeout = 15 * time.Second
+	readHeaderTimeout = 5 * time.Minute
 )
 
 type httpServer struct {

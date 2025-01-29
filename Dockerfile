@@ -18,10 +18,10 @@ RUN wget https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip \
     && unzip vosk-model-small-ru-0.22.zip -d model
 
 # Установить переменные окружения для пути к библиотекам Vosk
-ENV VOSK_PATH=/app/src
-ENV LD_LIBRARY_PATH=/app/src
-ENV CGO_CPPFLAGS="-I$VOSK_PATH"
-ENV CGO_LDFLAGS="-L$VOSK_PATH -lvosk"
+ENV VOSK_PATH=/app/model
+ENV LD_LIBRARY_PATH=/app/model/lib
+ENV CGO_CPPFLAGS="-I$VOSK_PATH/include -I$VOSK_PATH/pkg/vosk-api"
+ENV CGO_LDFLAGS="-L$VOSK_PATH/lib -lvosk"
 
 # Соберите приложение
 RUN go build -o app ./cmd/woody_ear
@@ -43,13 +43,15 @@ COPY --from=builder /app/app /app
 COPY --from=builder /app/model /app/model
 
 # Копируем библиотеки vosk
-COPY --from=builder /app/vosk-linux /app
+COPY --from=builder /app/model/lib /usr/lib
+COPY --from=builder /app/model/include /usr/include
+COPY --from=builder /app/pkg/vosk-api /usr/include/vosk-api
 
 # Задать переменные окружения в конечном образе
-ENV VOSK_PATH=/app
-ENV LD_LIBRARY_PATH=$VOSK_PATH:$LD_LIBRARY_PATH
-ENV CGO_CPPFLAGS="-I$VOSK_PATH"
-ENV CGO_LDFLAGS="-L$VOSK_PATH"
+ENV VOSK_PATH=/app/model
+ENV LD_LIBRARY_PATH=$VOSK_PATH/lib:$LD_LIBRARY_PATH
+ENV CGO_CPPFLAGS="-I$VOSK_PATH/include -I$VOSK_PATH/pkg/vosk-api"
+ENV CGO_LDFLAGS="-L$VOSK_PATH/lib -lvosk"
 
 # Запуск приложения
 CMD ["./app"]
