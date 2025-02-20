@@ -2,6 +2,7 @@ package restapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -45,6 +46,7 @@ func (s *httpServer) Start(ctx context.Context, router *chi.Mux) error {
 		Addr:        s.address,
 		Handler:     router,
 		ReadTimeout: readHeaderTimeout,
+		WriteTimeout: readHeaderTimeout,
 	}
 
 	go func() {
@@ -99,8 +101,20 @@ func (s *httpServer) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	aiTextResult, err := s.service.HandleTextFromAI(context.Background(), recognizeResult)
+	if err != nil {
+		http.Error(w, "Ошибка при обработке текста от AI", http.StatusInternalServerError)
+		return
+	}
+
+	body, err := json.Marshal(response{Reconize: recognizeResult, AIOutputText: aiTextResult})
+	if err != nil {
+		http.Error(w, "Ошибка при marshalling ответа", http.StatusInternalServerError)
+		return
+	}
+
 	// Ответ от клиента
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(recognizeResult))
+	w.Write(body)
 
 }

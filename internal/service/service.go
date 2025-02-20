@@ -1,25 +1,36 @@
 package service
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"mime/multipart"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	speachRecognizer "woody_ear/internal/service/speach_recognizer"
+	textai "woody_ear/internal/service/text_ai"
+	"woody_ear/internal/service/text_ai/ollama"
 )
 
 type Service struct {
 	recognizer *speachRecognizer.VoskService
+	textai     textai.TextAI
+	logger     *slog.Logger
 }
 
-func NewService() (*Service, error) {
+func NewService(aiConfigUrl string, log *slog.Logger) (*Service, error) {
 	recognizer, err := speachRecognizer.NewVoskService()
 	if err != nil {
 		return nil, fmt.Errorf("can't create recognizer: %w", err)
 	}
-	return &Service{recognizer: recognizer}, nil
+
+	ollamaClient, err := ollama.NewOllamaClient(aiConfigUrl)
+	if err != nil {
+		return nil, fmt.Errorf("can't create ollama client: %w", err)
+	}
+	return &Service{recognizer: recognizer, textai: ollamaClient, logger: log}, nil
 }
 
 func (s *Service) HandleFile(header *multipart.FileHeader, mp3FilePath, mp3file string) (string, error) {
@@ -50,6 +61,10 @@ func (s *Service) HandleFile(header *multipart.FileHeader, mp3FilePath, mp3file 
 	}
 
 	return recognizeResult, nil
+}
+
+func (s *Service) HandleTextFromAI(ctx context.Context, text string) (string, error) {
+	return s.textai.Analyze(ctx, text)
 }
 
 func convertMP3ToWav(header *multipart.FileHeader, fileExtension, mp3FilePath, mp3file string) (wavFilePath string, err error) {

@@ -14,6 +14,7 @@ import (
 )
 
 const baseURL = "localhost:8080"
+const ollamaBaseURL = "http://localhost:11434/api/generate"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
@@ -33,7 +34,7 @@ func main() {
 		}
 	}()
 
-	service, err := service.NewService()
+	service, err := service.NewService(ollamaBaseURL, logger)
 	httpServer := restapi.NewHTTPServer(baseURL, logger, service)
 	httpRouter, err := httpServer.NewRouter()
 	if err != nil {
