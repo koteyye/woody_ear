@@ -12,12 +12,11 @@
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/woody_ear/main.go",
             "env": {
-                "VOSK_PATH": "${workspaceFolder}/",
-                "DYLD_LIBRARY_PATH": "${workspaceFolder}"
-            },
-            "args": [
-                "--libvosk", "${workspaceFolder}/libvosk.dylib"
-            ]
+                "DYLD_LIBRARY_PATH": "${workspaceFolder}/",
+                "CGO_CPPFLAGS": "-I ${workspaceFolder}/pkg/vosk_api",
+                "CGO_LDFLAGS": "-L${workspaceFolder}/",
+                "MODEL_PATH": "${workspaceFolder}/vosk-model/"
+            }
         }
     ]
 }

@@ -13,7 +13,7 @@ type VoskService struct {
 }
 
 func NewVoskService() (*VoskService, error) {
-	modelPath := os.Getenv("VOSK_PATH") + "/vosk-model"
+	modelPath := os.Getenv("MODEL_PATH")
 	model, err := vosk.NewModel(modelPath)
 	if err != nil {
 		return nil, fmt.Errorf("can't create model: %w", err)
