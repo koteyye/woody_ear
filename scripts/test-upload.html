@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Woody Ear - Загрузка аудиофайла</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-container {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            background-color: #f9f9f9;
+        }
+        .upload-container:hover {
+            border-color: #999;
+        }
+        #file-input {
+            display: none;
+        }
+        .upload-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        .upload-btn:hover {
+            background-color: #45a049;
+        }
+        #file-name {
+            margin-top: 10px;
+            font-style: italic;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: #f5f5f5;
+            white-space: pre-wrap;
+            display: none;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 2s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>Woody Ear - Загрузка аудиофайла</h1>
+    
+    <div class="upload-container">
+        <p>Выберите аудиофайл в формате MP3 или WAV для распознавания и анализа</p>
+        <input type="file" id="file-input" accept=".mp3,.wav">
+        <label for="file-input" class="upload-btn">Выбрать файл</label>
+        <div id="file-name"></div>
+        <button id="submit-btn" class="upload-btn" style="display: none;">Загрузить</button>
+    </div>
+    
+    <div class="loader" id="loader"></div>
+    
+    <div id="result"></div>
+    
+    <script>
+        document.getElementById('file-input').addEventListener('change', function(e) {
+            const fileName = e.target.files[0] ? e.target.files[0].name : '';
+            document.getElementById('file-name').textContent = fileName;
+            document.getElementById('submit-btn').style.display = fileName ? 'inline-block' : 'none';
+        });
+        
+        document.getElementById('submit-btn').addEventListener('click', function() {
+            const fileInput = document.getElementById('file-input');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                alert('Пожалуйста, выберите файл');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            // Показываем индикатор загрузки
+            document.getElementById('loader').style.display = 'block';
+            document.getElementById('result').style.display = 'none';
+            
+            fetch('http://localhost:8080/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Ошибка при загрузке файла: ' + response.statusText);
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Скрываем индикатор загрузки
+                document.getElementById('loader').style.display = 'none';
+                
+                // Отображаем результат
+                const resultElement = document.getElementById('result');
+                resultElement.style.display = 'block';
+                
+                resultElement.innerHTML = `
+                    <h3>Распознанный текст:</h3>
+                    <p>${data.reconize}</p>
+                    <h3>Анализ текста:</h3>
+                    <p>${data.aiOutputText}</p>
+                `;
+            })
+            .catch(error => {
+                // Скрываем индикатор загрузки
+                document.getElementById('loader').style.display = 'none';
+                
+                // Отображаем ошибку
+                const resultElement = document.getElementById('result');
+                resultElement.style.display = 'block';
+                resultElement.innerHTML = `<p style="color: red;">Ошибка: ${error.message}</p>`;
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+services:
+  woody-ear:
+    build:
+      context: ../..
+      dockerfile: scripts/docker/Dockerfile.local
+    ports:
+      - "8080:8080"
+    environment:
+      - MODEL_PATH=/app/models/vosk-model
+      - LLM_MODEL_PATH=/app/models/llama-2-7b-chat.gguf
+      - SERVER_ADDRESS=0.0.0.0:8080
+      - TEMP_DIR=/app/tmp
+      - DEBUG=false
+      # Используем локальную модель
+      - AI_TYPE=local
+    volumes:
+      - woody_ear_tmp:/app/tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  woody_ear_tmp:

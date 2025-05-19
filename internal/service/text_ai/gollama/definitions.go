@@ -1,4 +1,4 @@
-package ollama
+package gollama
 
 type request struct {
 	Model  string `json:"model"`

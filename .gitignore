@@ -1,1 +1,29 @@
+# Модели и бинарные файлы
 /vosk-model
+/models
+*.gguf
+*.dylib
+*.so
+*.dll
+woody_ear
+
+# Временные файлы
+/tmp
+*.tmp
+*.mp3
+*.wav
+
+# Файлы IDE
+.idea/
+.vscode/*
+!.vscode/launch.json
+*.swp
+*.swo
+
+# Файлы операционной системы
+.DS_Store
+Thumbs.db
+
+# Файлы сборки Go
+/bin
+/dist

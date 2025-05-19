@@ -1,0 +1,156 @@
+# Используем конкретную версию Golang для сборки
+FROM golang:1.23-bullseye AS builder
+
+# Метаданные образа
+LABEL maintainer="Woody Ear Team"
+LABEL description="Сервис для конвертации аудио в текст с использованием Vosk и локальной LLM"
+LABEL version="1.0"
+
+# Установить необходимые пакеты и зависимости одним слоем для уменьшения размера образа
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    unzip \
+    wget \
+    build-essential \
+    cmake \
+    ca-certificates \
+    git \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установим директорию работы
+WORKDIR /build
+
+# Сначала копируем только go.mod и go.sum для кэширования зависимостей
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Теперь копируем исходный код
+COPY . .
+
+# Создаем директории для моделей
+RUN mkdir -p /build/models/vosk-model
+
+# Скачиваем и устанавливаем vosk-api для текущей архитектуры и модели
+RUN if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then \
+        wget --progress=dot:giga https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-aarch64-0.3.45.zip \
+        -O vosk-api.zip; \
+    else \
+        wget --progress=dot:giga https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip \
+        -O vosk-api.zip; \
+    fi \
+    && unzip vosk-api.zip -d /build/ \
+    && rm vosk-api.zip \
+    && mkdir -p /build/vosk-api \
+    && mv /build/vosk-linux-* /build/vosk-api/ \
+    && wget --progress=dot:giga https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip \
+    && unzip vosk-model-small-ru-0.22.zip -d /build/models/ \
+    && mv /build/models/vosk-model-small-ru-0.22/* /build/models/vosk-model/ \
+    && rm -rf /build/models/vosk-model-small-ru-0.22 vosk-model-small-ru-0.22.zip \
+    && wget --progress=dot:giga https://huggingface.co/TheBloke/Llama-2-7B-Chat-GGUF/resolve/main/llama-2-7b-chat.Q4_K_M.gguf \
+    -O /build/models/llama-2-7b-chat.gguf \
+    && ls -la /build/models/
+
+# Клонируем репозиторий go-llama.cpp с подмодулями согласно руководству
+RUN git clone --recurse-submodules --depth=1 https://github.com/go-skynet/go-llama.cpp.git /build/go-llama.cpp \
+    && cd /build/go-llama.cpp \
+    && make libbinding.a
+
+# Создаем директорию для сохранения библиотек llama.cpp
+RUN mkdir -p /build/llama_libs && \
+    if [ -f /build/go-llama.cpp/llama.cpp/build/libllama.so ]; then \
+        cp /build/go-llama.cpp/llama.cpp/build/libllama.so /build/llama_libs/; \
+    fi && \
+    if [ -f /build/go-llama.cpp/llama.cpp/build/libggml.so ]; then \
+        cp /build/go-llama.cpp/llama.cpp/build/libggml.so /build/llama_libs/; \
+    fi
+
+# Клонируем репозиторий vosk-api для получения заголовочных файлов
+RUN git clone --depth=1 https://github.com/alphacep/vosk-api.git /build/vosk-api-src
+
+# Установить переменные окружения для сборки
+ENV MODEL_PATH=/build/models/vosk-model
+ENV VOSK_PATH=/build/vosk-api
+ENV LD_LIBRARY_PATH=$VOSK_PATH:/build/go-llama.cpp
+ENV LIBRARY_PATH=/build/go-llama.cpp
+ENV C_INCLUDE_PATH=/build/go-llama.cpp:/build/go-llama.cpp/llama.cpp:/build/go-llama.cpp/llama.cpp/common:/build/vosk-api-src/src
+ENV CGO_CPPFLAGS="-I $VOSK_PATH -I /build/go-llama.cpp -I /build/go-llama.cpp/llama.cpp -I /build/go-llama.cpp/llama.cpp/common -I /build/vosk-api-src/src"
+
+# Находим директорию с libvosk.so
+RUN VOSK_LIB_DIR=$(find /build/vosk-api -name "libvosk.so" -exec dirname {} \; | head -n 1) && \
+    echo "VOSK_LIB_DIR=$VOSK_LIB_DIR" && \
+    echo "export CGO_LDFLAGS=\"-L $VOSK_LIB_DIR -lvosk -L /build/go-llama.cpp -lbinding\"" > /build/env.sh
+
+# Устанавливаем CGO_LDFLAGS с правильным путем к libvosk.so
+RUN . /build/env.sh && \
+    echo "CGO_LDFLAGS=$CGO_LDFLAGS"
+
+# Соберите приложение с оптимизациями
+ENV CGO_ENABLED=1 
+
+# Собираем приложение с правильными флагами линковки и очищаем ненужные файлы
+RUN . /build/env.sh && \
+    go build -ldflags="-s -w" -o woody_ear ./cmd/woody_ear && \
+    rm -rf /build/go-llama.cpp/.git /build/vosk-api-src/.git
+
+# Используем более легковесный образ для запуска
+FROM debian:bullseye-slim AS runtime
+
+# Метаданные образа
+LABEL maintainer="Woody Ear Team"
+LABEL description="Сервис для конвертации аудио в текст с использованием Vosk и локальной LLM"
+LABEL version="1.0"
+
+# Установить минимально необходимые зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libatomic1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установить рабочую директорию
+WORKDIR /app
+
+# Создаем директории для моделей и временных файлов
+RUN mkdir -p /app/models/vosk-model /app/tmp /usr/lib/llama /usr/include/llama.cpp
+
+# Копируем скомпилированное приложение и необходимые файлы из стадии сборки
+COPY --from=builder /build/woody_ear /app/
+COPY --from=builder /build/models/vosk-model /app/models/vosk-model/
+COPY --from=builder /build/models/llama-2-7b-chat.gguf /app/models/llama-2-7b-chat.gguf
+COPY --from=builder /build/scripts/test-upload.html /app/test-upload.html
+
+# Копируем библиотеки vosk и go-llama.cpp
+COPY --from=builder /build/vosk-api/ /tmp/vosk-api/
+RUN find /tmp/vosk-api -name "libvosk.so" -exec cp {} /usr/lib/ \; && \
+    find /tmp/vosk-api -name "libvosk.so" -exec cp {} /lib/ \;
+COPY --from=builder /build/go-llama.cpp/libbinding.a /usr/lib/
+
+# Копируем заголовочные файлы go-llama.cpp и vosk
+COPY --from=builder /build/go-llama.cpp/llama.cpp/*.h /usr/include/llama.cpp/
+RUN mkdir -p /usr/include/llama.cpp/common
+COPY --from=builder /build/go-llama.cpp/llama.cpp/common/*.h /usr/include/llama.cpp/common/
+COPY --from=builder /build/vosk-api-src/src/vosk_api.h /usr/include/
+
+# Копируем динамические библиотеки llama.cpp из подготовленной директории
+COPY --from=builder /build/llama_libs/ /usr/lib/llama/
+
+# Задать переменные окружения в конечном образе
+ENV MODEL_PATH=/app/models/vosk-model
+ENV LLM_MODEL_PATH=/app/models/llama-2-7b-chat.gguf
+ENV SERVER_ADDRESS=0.0.0.0:8080
+ENV TEMP_DIR=/app/tmp
+ENV LD_LIBRARY_PATH=/usr/lib:/usr/lib/llama
+ENV LIBRARY_PATH=/usr/lib:/usr/lib/llama
+ENV C_INCLUDE_PATH=/usr/include:/usr/include/llama.cpp:/usr/include/llama.cpp/common
+ENV AI_TYPE=local
+
+# Открываем порт для HTTP сервера
+EXPOSE 8080
+
+# Проверка здоровья приложения
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8080/ || exit 1
+
+# Запуск приложения
+CMD ["/app/woody_ear"]

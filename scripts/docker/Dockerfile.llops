@@ -1,0 +1,154 @@
+# Используем конкретную версию Golang для сборки
+FROM golang:1.23-bullseye AS builder
+
+# Метаданные образа
+LABEL maintainer="Woody Ear Team"
+LABEL description="Сервис для конвертации аудио в текст с использованием Vosk и внешнего LLOps сервиса"
+LABEL version="1.0"
+
+# Установить необходимые пакеты и зависимости одним слоем для уменьшения размера образа
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    unzip \
+    wget \
+    build-essential \
+    ca-certificates \
+    git \
+    cmake \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установим директорию работы
+WORKDIR /build
+
+# Сначала копируем только go.mod и go.sum для кэширования зависимостей
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Теперь копируем исходный код
+COPY . .
+
+# Создаем директории для моделей
+RUN mkdir -p /build/models/vosk-model
+
+# Скачиваем и устанавливаем vosk-api для текущей архитектуры и модели
+RUN if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then \
+        wget --progress=dot:giga https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-aarch64-0.3.45.zip \
+        -O vosk-api.zip; \
+    else \
+        wget --progress=dot:giga https://github.com/alphacep/vosk-api/releases/download/v0.3.45/vosk-linux-x86_64-0.3.45.zip \
+        -O vosk-api.zip; \
+    fi \
+    && unzip vosk-api.zip -d /build/ \
+    && rm vosk-api.zip \
+    && mkdir -p /build/vosk-api \
+    && mv /build/vosk-linux-* /build/vosk-api/ \
+    && wget --progress=dot:giga https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip \
+    && unzip vosk-model-small-ru-0.22.zip -d /build/models/ \
+    && mv /build/models/vosk-model-small-ru-0.22/* /build/models/vosk-model/ \
+    && rm -rf /build/models/vosk-model-small-ru-0.22 vosk-model-small-ru-0.22.zip
+
+# Клонируем репозиторий vosk-api для получения заголовочных файлов
+RUN git clone --depth=1 https://github.com/alphacep/vosk-api.git /build/vosk-api-src
+
+# Клонируем репозиторий go-llama.cpp и компилируем его (без скачивания модели)
+RUN git clone --recurse-submodules --depth=1 https://github.com/go-skynet/go-llama.cpp.git /build/go-llama.cpp \
+    && cd /build/go-llama.cpp \
+    && make libbinding.a
+
+# Установить переменные окружения для сборки
+ENV MODEL_PATH=/build/models/vosk-model
+ENV VOSK_PATH=/build/vosk-api
+ENV LD_LIBRARY_PATH=$VOSK_PATH:/build/go-llama.cpp
+ENV LIBRARY_PATH=/build/go-llama.cpp
+ENV C_INCLUDE_PATH=/build/go-llama.cpp:/build/go-llama.cpp/llama.cpp:/build/go-llama.cpp/llama.cpp/common:/build/vosk-api-src/src
+ENV CGO_CPPFLAGS="-I $VOSK_PATH -I /build/go-llama.cpp -I /build/go-llama.cpp/llama.cpp -I /build/go-llama.cpp/llama.cpp/common -I /build/vosk-api-src/src"
+
+# Находим директорию с libvosk.so
+RUN VOSK_LIB_DIR=$(find /build/vosk-api -name "libvosk.so" -exec dirname {} \; | head -n 1) && \
+    echo "VOSK_LIB_DIR=$VOSK_LIB_DIR" && \
+    echo "export CGO_LDFLAGS=\"-L $VOSK_LIB_DIR -lvosk -L /build/go-llama.cpp -lbinding\"" > /build/env.sh
+
+# Устанавливаем CGO_LDFLAGS с правильным путем к libvosk.so
+RUN . /build/env.sh && \
+    echo "CGO_LDFLAGS=$CGO_LDFLAGS"
+
+# Соберите приложение с оптимизациями
+ENV CGO_ENABLED=1 
+
+# Собираем приложение с правильными флагами линковки и очищаем ненужные файлы
+RUN . /build/env.sh && \
+    go build -ldflags="-s -w" -o woody_ear ./cmd/woody_ear && \
+    rm -rf /build/vosk-api-src/.git
+
+# Используем более легковесный образ для запуска
+FROM debian:bullseye-slim AS runtime
+
+# Метаданные образа
+LABEL maintainer="Woody Ear Team"
+LABEL description="Сервис для конвертации аудио в текст с использованием Vosk и внешнего LLOps сервиса"
+LABEL version="1.0"
+
+# Установить минимально необходимые зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    libatomic1 \
+    libgomp1 \
+    libstdc++6 \
+    libgcc1 \
+    libc6 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установить рабочую директорию
+WORKDIR /app
+
+# Создаем директории для моделей и временных файлов
+RUN mkdir -p /app/models/vosk-model /app/tmp
+
+# Копируем скомпилированное приложение и необходимые файлы из стадии сборки
+COPY --from=builder /build/woody_ear /app/
+COPY --from=builder /build/models/vosk-model /app/models/vosk-model/
+COPY --from=builder /build/scripts/test-upload.html /app/test-upload.html
+
+# Копируем библиотеки vosk
+COPY --from=builder /build/vosk-api/ /tmp/vosk-api/
+RUN find /tmp/vosk-api -name "libvosk.so" -exec cp {} /usr/lib/ \; && \
+    find /tmp/vosk-api -name "libvosk.so" -exec cp {} /lib/ \; && \
+    echo "Copied libvosk.so to /usr/lib and /lib" && \
+    ls -la /usr/lib/libvosk.so /lib/libvosk.so || echo "Failed to copy libvosk.so"
+
+# Копируем библиотеки go-llama.cpp
+COPY --from=builder /build/go-llama.cpp/libbinding.a /usr/lib/
+COPY --from=builder /build/go-llama.cpp/libbinding.a /lib/
+# Копируем все .so библиотеки из go-llama.cpp, если они есть
+RUN mkdir -p /tmp/go-llama-cpp
+COPY --from=builder /build/go-llama.cpp/ /tmp/go-llama-cpp/
+RUN find /tmp/go-llama-cpp -name "*.so" -exec cp {} /usr/lib/ \; && \
+    find /tmp/go-llama-cpp -name "*.so" -exec cp {} /lib/ \; || echo "No .so libraries found in go-llama.cpp"
+
+# Копируем заголовочные файлы vosk
+COPY --from=builder /build/vosk-api-src/src/vosk_api.h /usr/include/
+
+# Задать переменные окружения в конечном образе
+ENV MODEL_PATH=/app/models/vosk-model
+ENV SERVER_ADDRESS=0.0.0.0:8080
+ENV TEMP_DIR=/app/tmp
+ENV LD_LIBRARY_PATH=/usr/lib:/lib
+ENV LIBRARY_PATH=/usr/lib:/lib
+ENV C_INCLUDE_PATH=/usr/include
+# Используем внешний LLMOps сервис (Claude API)
+ENV AI_TYPE=llops
+# Базовый URL будет переопределен в docker-compose-llops.yml
+ENV LLOPS_BASE_URL=https://api.anthropic.com
+ENV LLOPS_MODEL_ID=claude-3-sonnet-20240229
+
+# Открываем порт для HTTP сервера
+EXPOSE 8080
+
+# Проверка здоровья приложения
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8080/ || exit 1
+
+# Запуск приложения
+CMD ["/app/woody_ear"]

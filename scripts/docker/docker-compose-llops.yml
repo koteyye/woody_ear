@@ -1,0 +1,29 @@
+services:
+  woody-ear:
+    build:
+      context: ../..
+      dockerfile: scripts/docker/Dockerfile.llops
+    ports:
+      - "8080:8080"
+    environment:
+      - MODEL_PATH=/app/models/vosk-model
+      - SERVER_ADDRESS=0.0.0.0:8080
+      - TEMP_DIR=/app/tmp
+      - DEBUG=false
+      # Используем внешний LLMOps сервис (Claude API)
+      - AI_TYPE=llops
+      - LLOPS_BASE_URL=https://api.anthropic.com
+      - LLOPS_TOKEN=sk-ant-api03-your-api-key-here
+      - LLOPS_MODEL_ID=claude-3-sonnet-20240229
+    volumes:
+      - woody_ear_tmp:/app/tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  woody_ear_tmp:
